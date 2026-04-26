@@ -1,6 +1,87 @@
-const H={'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36','Accept':'*/*','Accept-Language':'en-US,en;q=0.9','Accept-Encoding':'gzip, deflate, br','Connection':'keep-alive','Sec-Fetch-Dest':'empty','Sec-Fetch-Mode':'cors','Sec-Fetch-Site':'same-origin'};
-async function tryVidSrcIcu(tmdb,type,season,episode){try{let u=type==='tv'?`https://vidsrc.icu/embed/tv?tmdb=${tmdb}&season=${season}&episode=${episode}`:`https://vidsrc.icu/embed/movie?tmdb=${tmdb}`;const r=await fetch(u,{headers:{...H,'Referer':'https://vidsrc.icu/'},signal:AbortSignal.timeout(10000)});if(!r.ok)return null;const h=await r.text();const m=h.match(/["']([^"']*\.m3u8[^"']*)['"]/);if(m&&m[1])return{url:m[1],source:'vidsrc.icu',quality:'auto',priority:1};const f=h.match(/file['"]\s*:\s*['"]([^'"]+)['"]/);if(f&&f[1]&&(f[1].includes('.m3u8')||f[1].includes('.mp4')))return{url:f[1],source:'vidsrc.icu',quality:'auto',priority:1};return null;}catch(e){return null;}}
-async function tryVidSrcMe(tmdb,type,season,episode){try{let u=type==='tv'?`https://vidsrc.me/embed/tv?tmdb=${tmdb}&season=${season}&episode=${episode}`:`https://vidsrc.me/embed/movie?tmdb=${tmdb}`;const r=await fetch(u,{headers:{...H,'Referer':'https://vidsrc.me/'},redirect:'follow',signal:AbortSignal.timeout(10000)});if(!r.ok)return null;const h=await r.text();const m=h.match(/["']([^"']*\.m3u8[^"']*)['"]/);if(m&&m[1])return{url:m[1],source:'vidsrc.me',quality:'auto',priority:2};return null;}catch(e){return null;}}
-async function tryEmbed2(tmdb,type,season,episode){try{let u=type==='tv'?`https://2embed.org/embed/tv?id=${tmdb}&s=${season}&e=${episode}`:`https://2embed.org/embed/movie?id=${tmdb}`;const r=await fetch(u,{headers:{...H,'Referer':'https://2embed.org/'},redirect:'follow',signal:AbortSignal.timeout(10000)});if(!r.ok)return null;const h=await r.text();const m=h.match(/https?:\/\/[^\s"'\\]+\.m3u8[^\s"'\\]*/);if(m)return{url:m[0],source:'2embed',quality:'auto',priority:3};return null;}catch(e){return null;}}
-async function tryAutoEmbed(tmdb,type,season,episode){try{let u=type==='tv'?`https://tom.autoembed.cc/api/getVideoSource?type=tv&id=${tmdb}&season=${season}&episode=${episode}`:`https://tom.autoembed.cc/api/getVideoSource?type=movie&id=${tmdb}`;const r=await fetch(u,{headers:{...H,'Referer':'https://autoembed.cc/','Origin':'https://autoembed.cc'},signal:AbortSignal.timeout(10000)});if(!r.ok)return null;const d=await r.json();const v=d?.videoSource||d?.url||d?.sources?.[0]?.file;if(v)return{url:v,source:'autoembed',quality:'auto',priority:4};return null;}catch(e){return null;}}
-export default async function handler(req,res){res.setHeader('Access-Control-Allow-Origin','*');res.setHeader('Cache-Control','no-store');if(req.method==='OPTIONS')return res.status(200).end();const{tmdb,type='movie',season='1',episode='1'}=req.query;if(!tmdb)return res.status(400).json({success:false,error:'Missing tmdb'});const results=await Promise.allSettled([tryVidSrcIcu(tmdb,type,season,episode),tryVidSrcMe(tmdb,type,season,episode),tryEmbed2(tmdb,type,season,episode),tryAutoEmbed(tmdb,type,season,episode)]);const streams=results.filter(r=>r.status==='fulfilled'&&r.value).map(r=>r.value).sort((a,b)=>a.priority-b.priority);if(!streams.length)return res.status(404).json({success:false,error:'No streams found',debug:'All sources blocked or unavailable'});return res.status(200).json({success:true,primary:streams[0],streams,count:streams.length});}
+import { getEmbedSuVideo, getEmbedSuStreamUrl } from 'vidsrc-bypass';
+import { getVidSrcRipVideo, getVidSrcRipStreamUrl } from 'vidsrc-bypass';
+import { getVidLinkProVideo } from 'vidsrc-bypass';
+
+// ── EmbedSu (embed.su) ────────────────────────────────────
+async function tryEmbedSu(tmdb, type, season, episode) {
+  try {
+    let details;
+    if (type === 'tv') {
+      details = await getEmbedSuVideo(Number(tmdb), Number(season), Number(episode));
+    } else {
+      details = await getEmbedSuVideo(Number(tmdb));
+    }
+    if (!details?.servers?.length) return null;
+
+    for (const server of details.servers) {
+      try {
+        const stream = await getEmbedSuStreamUrl(server.hash);
+        const url = stream?.url || stream?.stream || stream?.source;
+        if (url && (url.includes('.m3u8') || url.includes('.mp4'))) {
+          return { url, source: 'embed.su', quality: 'auto', priority: 1 };
+        }
+      } catch (_) { continue; }
+    }
+    return null;
+  } catch (e) { return null; }
+}
+
+// ── VidSrcRip (vidsrc.rip) ───────────────────────────────
+async function tryVidSrcRip(tmdb, type, season, episode) {
+  try {
+    const config = await getVidSrcRipVideo(String(tmdb));
+    if (!config) return null;
+
+    const provider = type === 'tv' ? 'flixhq' : 'flixhq';
+    const stream = await getVidSrcRipStreamUrl(provider, String(tmdb));
+    const url = stream?.url || stream?.stream;
+    if (url && (url.includes('.m3u8') || url.includes('.mp4'))) {
+      return { url, source: 'vidsrc.rip', quality: 'auto', priority: 2 };
+    }
+    return null;
+  } catch (e) { return null; }
+}
+
+// ── VidLink Pro ──────────────────────────────────────────
+async function tryVidLink(tmdb, type, season, episode) {
+  try {
+    let details;
+    if (type === 'tv') {
+      details = await getVidLinkProVideo({ id: String(tmdb), season: Number(season), episode: Number(episode), type: 'tv' });
+    } else {
+      details = await getVidLinkProVideo({ id: String(tmdb), type: 'movie' });
+    }
+    const url = details?.url || details?.stream || details?.source;
+    if (url && (url.includes('.m3u8') || url.includes('.mp4'))) {
+      return { url, source: 'vidlink.pro', quality: 'auto', priority: 3 };
+    }
+    return null;
+  } catch (e) { return null; }
+}
+
+// ── Main Handler ─────────────────────────────────────────
+export default async function handler(req, res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cache-Control', 'no-store');
+  if (req.method === 'OPTIONS') return res.status(200).end();
+
+  const { tmdb, type = 'movie', season = '1', episode = '1' } = req.query;
+  if (!tmdb) return res.status(400).json({ success: false, error: 'Missing tmdb' });
+
+  const results = await Promise.allSettled([
+    tryEmbedSu(tmdb, type, season, episode),
+    tryVidLink(tmdb, type, season, episode),
+    tryVidSrcRip(tmdb, type, season, episode),
+  ]);
+
+  const streams = results
+    .filter(r => r.status === 'fulfilled' && r.value)
+    .map(r => r.value)
+    .sort((a, b) => a.priority - b.priority);
+
+  if (!streams.length) {
+    return res.status(404).json({ success: false, error: 'No streams found' });
+  }
+
+  return res.status(200).json({ success: true, primary: streams[0], streams, count: streams.length });
+}
